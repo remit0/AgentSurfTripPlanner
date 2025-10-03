@@ -1,0 +1,22 @@
+# Python build artifacts
+*.egg-info
+
+# Virtual Environment
+venv/
+.venv/
+
+# PyCharm
+.idea/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Dataiku
+.dataiku
+
+# Environment files
+.env
+
+# Local tests
+sandbox.ipynb

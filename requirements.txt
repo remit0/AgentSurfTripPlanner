@@ -1,0 +1,8 @@
+langchain-openai
+langgraph
+protobuf
+google-api-python-client
+geopy
+requests
+langchain-core
+langchain

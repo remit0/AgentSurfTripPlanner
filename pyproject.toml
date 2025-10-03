@@ -1,0 +1,27 @@
+# pyproject.toml
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "surf_planner"
+version = "0.1.0"
+authors = [
+  { name="Rémi Rosenthal", email="remi.rosenthal@dataiku.com" },
+]
+description = "A package for planning surf trips."
+requires-python = ">=3.10"
+dependencies = [
+  "langgraph",
+]
+
+[tool.ruff]
+line-length = 120
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
+include = ["AGENTSURFTRIPPLANNER/lib/python/*"]
+exclude = [".venv"]
+
+[tool.ruff.format]
+quote-style = "double"
