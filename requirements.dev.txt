@@ -3,6 +3,4 @@ ruff
 http://localhost:11000/public/packages/dataiku-internal-client.tar.gz
 dataikuapi
 dotenv
-
-# project requirements
-langchain-core
+grandalf

@@ -1,26 +1,26 @@
-import datetime
 import operator
-from typing import Annotated, TypedDict
+from typing import TypedDict, Annotated, Optional
+from datetime import date
 
 
-class AgentState(TypedDict):
-    # Fields for accumulating tool results
-    messages: Annotated[list, operator.add]
+class TripDetails(TypedDict, total=False):
+    """Holds the specifications for the surf trip plan."""
+    departure_city: str
+    destination_city: str
+    departure_date: date
+    return_date: date
+    desired_surf_conditions: str
 
-    availabilities: Annotated[list, operator.add]
+class ToolData(TypedDict):
+    """Holds the accumulated raw data from tool calls."""
+    calendar_availabilities: Annotated[list, operator.add] # Renamed for clarity
     surf_forecasts: Annotated[list, operator.add]
     train_options: Annotated[list, operator.add]
 
-    # These will be populated by the gather_info_node
-    departure_city: str | None
-    destination_city: str | None
-    departure_date: datetime.date | None
-    return_date: datetime.date | None
-    spot: str | None
-    surf_conditions: str | None
-
-    # Field to control the graph's flow
-    next_step: str | None
-
-    # Error handling
-    error: str | None
+class AgentState(TypedDict):
+    """The overall state of the agent."""
+    messages: Annotated[list, operator.add]
+    trip_details: TripDetails
+    tool_data: ToolData
+    current_intent: Optional[str]
+    error: Optional[str]
