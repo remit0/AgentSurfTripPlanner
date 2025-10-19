@@ -39,11 +39,10 @@ class TrainTicket:
     departure_time: datetime.datetime
     arrival_time: datetime.datetime
     duration: str
-    price_eur: float
 
     def __str__(self) -> str:
         dep_time = self.departure_time.strftime('%H:%M')
         arr_time = self.arrival_time.strftime('%H:%M')
         return (f"Train from {self.origin} to {self.destination} on {self.date.isoformat()}: "
                 f"Departs {dep_time}, Arrives {arr_time}, "
-                f"Duration: {self.duration}, Price: {self.price_eur:.2f} EUR")
+                f"Duration: {self.duration}")

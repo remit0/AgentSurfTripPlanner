@@ -1,12 +1,27 @@
-import datetime
 import json
+import logging
 from datetime import date
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langgraph.graph import END, StateGraph
-from langchain.agents import create_tool_calling_agent, AgentExecutor
 
-from .prompts import route_intent_prompt_template, plan_and_execute_prompt, update_details_prompt_template, chat_prompt_template
-from .state import AgentState
+# Add this to the top of your main script to see the debug messages
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.graph import END, StateGraph
+from langchain.agents.format_scratchpad.openai_tools import format_to_openai_tool_messages
+from .prompts import (
+    chat_prompt_template,
+    clarify_query_prompt_template,
+    inform_user_prompt_template,
+    plan_travel_logistics_prompt_template,
+    request_missing_details_prompt_template,
+    route_intent_prompt_template,
+    summarize_plan_prompt_template,
+    update_details_prompt_template,
+    validate_surf_forecast_prompt_template,
+)
+from .state import AgentState, get_tool_data_for_prompt
+from .tools.helpers import get_weekend_dates, parse_llm_json_response
+
+
 
 
 class AgentGraph:
@@ -17,71 +32,36 @@ class AgentGraph:
         self.model_with_tools = model.bind_tools(tools)
         self.tools = tools
         self.tool_map = {tool.name: tool for tool in tools}
+        logging.debug("AgentGraph initialized with %d tools.", len(tools))
 
-    def _extract_and_parse_json(self, raw_string: str) -> dict | None:
-        """
-        Safely extracts a JSON object from a string that might be wrapped in Markdown.
-
-        Args:
-            raw_string: The raw text response from the LLM.
-
-        Returns:
-            A dictionary if a valid JSON object is found, otherwise None.
-        """
-        try:
-            # Find the first '{' and the last '}'
-            start_index = raw_string.find('{')
-            end_index = raw_string.rfind('}') + 1
-
-            # Return None if JSON object markers aren't found
-            if start_index == -1 or end_index == 0:
-                return None
-
-            # Slice the string to get the pure JSON part
-            json_string = raw_string[start_index:end_index]
-
-            # Parse the clean string
-            return json.loads(json_string)
-
-        except (json.JSONDecodeError, IndexError):
-            # Handle cases where the slice is not valid JSON
-            return None
+    # --- NODE IMPLEMENTATIONS ---
 
     def node_route_intent(self, state: AgentState):
-        """
-        The central router. Classifies the user's intent and updates the state.
-        """
-        # 1. Prepare the inputs for the prompt
+        logging.debug("ENTERING NODE: route_intent")
         conversation_history = "\n".join([f"{msg.type}: {msg.content}" for msg in state["messages"]])
-        trip_details_str = json.dumps(state.get("trip_details", {}), indent=2)
+        trip_details_str = json.dumps(state.get("trip_details", {}), default=str)
 
-        # 2. Create the chain and invoke the LLM
         classifier_chain = route_intent_prompt_template | self.plain_model
         response = classifier_chain.invoke(
             {"trip_details": trip_details_str, "conversation_history": conversation_history}
         )
 
-        # 3. Safely parse the JSON output and update the state
         try:
-            intent_json = json.loads(response.content)
+            intent_json = parse_llm_json_response(response.content)
             intent = intent_json["intent"]
-            print(f"Intent classified as: {intent}")
+            logging.debug("LLM classified intent as: %s", intent)
         except Exception as e:
-            print(f"Error parsing intent, routing to error handler. Error: {e}")
+            logging.error("Error parsing intent, defaulting to 'error'. Details: %s", e)
             intent = "error"
 
         return {"current_intent": intent}
 
     def node_update_trip_details(self, state: AgentState):
-        """
-        Calls an LLM to extract and update trip details from the conversation.
-        """
-        # 1. Prepare the inputs for the prompt
+        logging.debug("ENTERING NODE: update_trip_details")
         conversation_history = "\n".join([f"{msg.type}: {msg.content}" for msg in state["messages"]])
-        current_details_str = json.dumps(state.get("trip_details", {}))
+        current_details_str = json.dumps(state.get("trip_details", {}), default=str)
         current_date_str = date.today().isoformat()
 
-        # 2. Create the chain and invoke the LLM
         chain = update_details_prompt_template | self.plain_model
         response = chain.invoke(
             {
@@ -91,199 +71,334 @@ class AgentGraph:
             }
         )
 
-        # 3. Safely parse the JSON output and update the state
         try:
-            parsed_info = json.loads(response.content)
+            parsed_info = parse_llm_json_response(response.content)
+            logging.debug("Parsed trip details update: %s", parsed_info)
             new_trip_details = state.get("trip_details", {}).copy()
             new_trip_details.update(parsed_info)
 
-            # 4. Convert date strings from LLM to proper datetime.date objects
             if "departure_date" in new_trip_details and isinstance(new_trip_details["departure_date"], str):
                 new_trip_details["departure_date"] = date.fromisoformat(new_trip_details["departure_date"])
-
             if "return_date" in new_trip_details and isinstance(new_trip_details["return_date"], str):
                 new_trip_details["return_date"] = date.fromisoformat(new_trip_details["return_date"])
 
             return {"trip_details": new_trip_details}
-
         except (json.JSONDecodeError, TypeError) as e:
-            # If parsing fails, we don't change the state and can log the error
-            print(f"Error parsing details, state remains unchanged. Error: {e}")
-            return {}  # Return an empty dict to signify no changes were made
+            logging.error("Error parsing details, state remains unchanged. Details: %s", e)
+            return {}
 
     def node_chat_with_user(self, state: AgentState):
-        """
-        The general-purpose worker node. It can call tools or answer directly.
-        """
-        # 1. Create the Agent and AgentExecutor
-        # This creates a powerful "sub-agent" that can reason and use tools.
+        logging.debug("ENTERING NODE: chat_with_user")
         agent = create_tool_calling_agent(self.model_with_tools, self.tools, chat_prompt_template)
         agent_executor = AgentExecutor(agent=agent, tools=self.tools, verbose=True)
 
-        # 2. Prepare the inputs for the AgentExecutor
         messages = state["messages"]
-        trip_details_str = json.dumps(state.get("trip_details", {}), indent=2)
+        trip_details_str = json.dumps(state.get("trip_details", {}), default=str)
         inputs = {"input": messages[-1].content, "chat_history": messages[:-1], "trip_details": trip_details_str}
 
-        # 3. Invoke the AgentExecutor
         response = agent_executor.invoke(inputs)
-
-        # 4. Update the state
         final_message = AIMessage(content=response["output"])
         return {"messages": [final_message]}
 
+    def node_clarify_query(self, state: AgentState):
+        logging.debug("ENTERING NODE: clarify_query")
+        conversation_history = "\n".join([f"{msg.type}: {msg.content}" for msg in state["messages"]])
+        chain = clarify_query_prompt_template | self.plain_model
+        response = chain.invoke({"conversation_history": conversation_history})
+        clarifying_question = AIMessage(content=response.content)
+        return {"messages": [clarifying_question]}
 
-    def plan_and_execute_node(self, state: AgentState):
-        """
-        The main worker node. Looks at the current state and decides which tool to call next.
-        """
-        structured_state_summary = self._format_state_for_prompt(state)
+    def node_request_missing_details(self, state: AgentState):
+        logging.debug("ENTERING NODE: request_missing_details")
+        conversation_history = "\n".join([f"{msg.type}: {msg.content}" for msg in state["messages"]])
+        trip_details_str = json.dumps(state.get("trip_details", {}), default=str)
+        chain = request_missing_details_prompt_template | self.plain_model
+        response = chain.invoke({"trip_details": trip_details_str, "conversation_history": conversation_history})
+        question_message = AIMessage(content=response.content)
+        return {"messages": [question_message]}
 
-        # Keep only the Human and AI messages for the conversational history
-        filtered_messages = []
-        for msg in state["messages"]:
-            if isinstance(msg, HumanMessage):
-                filtered_messages.append(msg)
-            elif isinstance(msg, AIMessage) and not msg.tool_calls:
-                filtered_messages.append(msg)
+    def node_check_surf_forecast(self, state: AgentState):
+        logging.debug("ENTERING NODE: check_surf_forecast")
+        trip_details = state.get("trip_details", {})
+        departure_date = trip_details.get("departure_date")
+        destination = trip_details.get("destination_city")
 
-        prompt_input = {
-            "messages": filtered_messages,
-            "structured_state_summary": structured_state_summary
+        if not departure_date or not destination:
+            error_msg = "Missing departure date or destination for forecast."
+            logging.warning(error_msg)
+            return {"error": error_msg}
+
+        saturday, sunday = get_weekend_dates(departure_date)
+        logging.debug("Checking forecast from %s to %s in %s", saturday, sunday, destination)
+
+        surf_tool = self.tool_map.get("get_surf_forecast")
+        if not surf_tool:
+            error_msg = "Tool 'get_surf_forecast' not found."
+            logging.error(error_msg)
+            return {"error": error_msg}
+
+        forecast_result = surf_tool.invoke(
+            {"spot": destination, "from_date": saturday.isoformat(), "to_date": sunday.isoformat()}
+        )
+
+        if isinstance(forecast_result, str):
+            logging.error("Tool 'get_surf_forecast' returned an error: %s", forecast_result)
+            return {"error": forecast_result}
+
+        logging.debug(f"Successfully retrieved surf forecast. {forecast_result}")
+        return {"surf_forecasts": forecast_result}
+
+    def node_inform_user_of_bad_surf(self, state: AgentState):
+        logging.debug("ENTERING NODE: inform_user_of_bad_surf")
+        forecast_data = state.get("surf_forecasts", [])
+        desired_conditions = state.get("trip_details", {}).get("desired_surf_conditions", "any")
+        chain = inform_user_prompt_template | self.plain_model
+        response = chain.invoke({"desired_surf_conditions": desired_conditions, "forecast_data": str(forecast_data)})
+        message = AIMessage(content=response.content)
+        return {"messages": [message]}
+
+    def node_plan_travel_logistics(self, state: AgentState):
+        logging.debug("ENTERING NODE: plan_travel_logistics (The Brain)")
+
+        messages = state["messages"]
+
+        # The scratchpad contains the agent's internal tool-related messages.
+        # Find the index of the last "real" message (Human or simple AI response)
+        last_real_message_idx = -1
+        for i, msg in enumerate(reversed(messages)):
+            if not (isinstance(msg, AIMessage) and msg.tool_calls) and not isinstance(msg, ToolMessage):
+                last_real_message_idx = len(messages) - 1 - i
+                break
+        # All messages after that index are part of the scratchpad
+        chat_history = messages[: last_real_message_idx + 1]
+        scratchpad_messages = messages[last_real_message_idx + 1 :]
+
+        chain = plan_travel_logistics_prompt_template | self.model_with_tools
+        inputs = {
+            "input": chat_history[-1].content,
+            "chat_history": chat_history[:-1],
+            "trip_details": state.get("trip_details", {}),
+            "tool_data": get_tool_data_for_prompt(state),
+            "agent_scratchpad": scratchpad_messages,
         }
 
-        chain = plan_and_execute_prompt | self.model_with_tools
-        response = chain.invoke(prompt_input)
+        response_message = chain.invoke(inputs)
+        return {"messages": [response_message]}
 
-        return {"messages": [response]}
+    def node_execute_tools(self, state: AgentState):
+        """
+        Executes one or more tool calls and updates the state with all results.
+        """
+        logging.debug("ENTERING NODE: execute_tools (The Hands)")
+        last_message = state["messages"][-1]
 
-    def tool_node(self, state: AgentState):
-        """The custom tool node for executing tools and updating the state."""
-        last_message = state['messages'][-1]
+        # Check if there are any tool calls to execute
+        if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
+            logging.debug("No tool calls to execute.")
+            return {}
+
         tool_calls = last_message.tool_calls
 
+        # This dictionary will collect all updates from all tool calls
         state_updates = {}
         tool_messages = []
 
-        for call in tool_calls:
-            if call['name'] in self.tool_map:
-                tool_to_call = self.tool_map[call['name']]
-                result = tool_to_call.invoke(call['args'])
-            else:
-                result = f"Error: Tool '{call['name']}' not found."
+        for tool_call in tool_calls:
+            tool_name = tool_call["name"]
+            tool_to_call = self.tool_map[tool_name]
+            logging.debug("Calling tool '%s' with args: %s", tool_name, tool_call["args"])
 
-            tool_messages.append(ToolMessage(content=str(result), tool_call_id=call['id']))
+            try:
+                output = tool_to_call.invoke(tool_call["args"])
+            except Exception as e:
+                error_message = f"Tool '{tool_name}' failed with an exception: {e}"
+                logging.error(error_message)
+                return {"error": error_message}  # Stop immediately on exception
 
-            if isinstance(result, str):
-                # Populate the 'error' field in the state to trigger the error handler.
-                state_updates['error'] = result
-            elif isinstance(result, list):
-                # Only update the structured state if the result is the correct type (a list).
-                if call['name'] == 'check_calendar':
-                    state_updates['availabilities'] = result
-                elif call['name'] == 'get_surf_forecast':
-                    state_updates['surf_forecasts'] = result
-                elif call['name'] == 'find_train_tickets':
-                    state_updates['train_options'] = result
+            # Check if the tool itself returned a known error string
+            if isinstance(output, str) and "error" in output.lower():
+                logging.error("Tool '%s' returned a managed error: %s", tool_name, output)
+                return {"error": output}  # Stop immediately on managed error
 
-        state_updates['messages'] = tool_messages
+            # Append the ToolMessage for the agent's scratchpad
+            tool_messages.append(ToolMessage(content=str(output), tool_call_id=tool_call["id"]))
+
+            # CORRECTED: Add the specific tool output to our updates dictionary instead of returning
+            if tool_name == "check_calendar":
+                state_updates["calendar_availabilities"] = output
+            elif tool_name == "find_train_tickets":  # Corrected name based on previous discussions
+                state_updates["train_options"] = output
+            elif tool_name == "get_surf_forecast":
+                state_updates["surf_forecasts"] = output
+
+        state_updates["messages"] = tool_messages
         return state_updates
 
-    def synthesis_node(self, state: AgentState):
-        """
-        Generates the final user-facing response, either asking for clarification
-        or presenting the final trip options.
-        """
-        structured_state_summary = self._format_state_for_prompt(state)
-        prompt = synthesis_prompt.format(structured_state_summary=structured_state_summary)
-        # Use a model without tools to ensure it only generates text
-        response = self.plain_model.invoke(prompt)
-        return {"messages": [response]}
-
-    def error_node(self, state: AgentState):
-        """This node is called when a tool fails, to formulate a final error message."""
-        error = state.get("error")
+    def node_handle_error(self, state: AgentState):
+        logging.debug("ENTERING NODE: handle_error")
+        error = state.get("error", "An unknown error occurred.")
         error_message = f"I'm sorry, I encountered an error and cannot continue. Details: {error}"
         return {"messages": [AIMessage(content=error_message)]}
 
-    def decide_after_gathering(self, state: AgentState) -> str:
-        """
-        Edge 1: Decides where to go after the info gathering step.
-        """
-        if state.get("departure_city") and state.get("destination_city"):
-            return "execute_plan"
-        else:
-            # The synthesis node will be prompted to ask for clarification
-            return "ask_for_clarification"
+    def node_summarize_plan(self, state: AgentState):
+        logging.debug("ENTERING NODE: summarize_plan")
+        trip_details_str = json.dumps(state.get("trip_details", {}), default=str)
+        tool_data_str = json.dumps(get_tool_data_for_prompt(state), default=str)
+        logging.debug("Assembled tool_data for summary: %s", tool_data_str)
+        chain = summarize_plan_prompt_template | self.plain_model
+        response = chain.invoke({"trip_details": trip_details_str, "tool_data": tool_data_str})
+        summary_message = AIMessage(content=response.content)
+        return {"messages": [summary_message]}
 
-    def should_continue_planning(self, state: AgentState) -> str:
+    # --- ROUTING FUNCTION IMPLEMENTATIONS ---
+    def route_from_intent(self, state: AgentState) -> str:
         """
-        Edge 2: Decides if the agent needs to call more tools or can synthesize a final answer.
+        Reads the 'current_intent' from the state for the main router.
         """
-        if state["messages"][-1].tool_calls:
-            return "use_tool"
-        else:
-            # The planner has finished, proceed to generate the final answer
-            return "generate_final_answer"
+        intent = state.get("current_intent")
+        logging.debug("ROUTING from 'route_intent' with intent: %s", intent)
 
-    def decide_after_tools(self, state: AgentState) -> str:
-        """Decides whether to continue planning or handle an error after a tool run."""
+        if not intent:
+            logging.error("No intent found in state, routing to 'error'.")
+            return "error"
+
+        return intent
+
+    def route_after_update(self, state: AgentState) -> str:
+        """
+        Checks if all mandatory details are present after an update.
+        """
+        logging.debug("ROUTING from 'update_trip_details' to check for completion.")
+        details = state.get("trip_details", {})
+        mandatory_keys = ["departure_city", "destination_city", "departure_date"]
+
+        if all(details.get(key) for key in mandatory_keys):
+            logging.debug("Validation complete: All mandatory details are present. Routing to 'details_complete'.")
+            return "details_complete"
+        else:
+            logging.debug("Validation incomplete: Mandatory details are missing. Routing to 'details_incomplete'.")
+            return "details_incomplete"
+
+    def route_after_forecast(self, state: AgentState) -> str:
+        logging.debug("ROUTING from 'check_surf_forecast'")
+        forecast_data = state.get("surf_forecasts", [])
+        desired_conditions = state.get("trip_details", {}).get("desired_surf_conditions", "any")
+
+        if not forecast_data or state.get("error"):
+            logging.warning("No forecast data or error present, routing to 'forecast_is_bad'.")
+            return "forecast_is_bad"
+
+        chain = validate_surf_forecast_prompt_template | self.plain_model
+        response = chain.invoke({"desired_conditions": desired_conditions, "forecast_data": str(forecast_data)})
+
+        if "yes" in response.content.lower():
+            logging.debug("Validation result: Forecast is good.")
+            return "forecast_is_good"
+        else:
+            logging.debug("Validation result: Forecast is bad.")
+            return "forecast_is_bad"
+
+    def route_from_plan(self, state: AgentState) -> str:
+        logging.debug("ROUTING from 'plan_travel_logistics'")
+        last_message = state["messages"][-1]
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            logging.debug("Tool call detected, routing to 'continue_planning'.")
+            return "continue_planning"
+        else:
+            logging.debug("No tool call detected, routing to 'plan_complete'.")
+            return "plan_complete"
+
+    def route_after_tools(self, state: AgentState) -> str:
+        logging.debug("ROUTING from 'execute_tools'")
         if state.get("error"):
-            return "handle_error"
+            logging.debug("Error detected in state, routing to 'error'.")
+            return "error"
         else:
-            return "plan_and_execute"
+            logging.debug("No error detected, routing to 'continue'.")
+            return "continue"
 
     def create_graph(self):
         """Builds and compiles the final state machine graph."""
         workflow = StateGraph(AgentState)
 
-        # 1. Add all nodes with clear, action-oriented names
+        # 1. Add all nodes required for the design
         workflow.add_node("route_intent", self.node_route_intent)
         workflow.add_node("update_trip_details", self.node_update_trip_details)
         workflow.add_node("chat_with_user", self.node_chat_with_user)
-
-        workflow.add_node("reason_about_plan", self.node_reason_about_plan)
+        workflow.add_node("clarify_query", self.node_clarify_query)
+        workflow.add_node("request_missing_details", self.node_request_missing_details)
+        # --- Nodes for the structured planning flow ---
+        workflow.add_node("check_surf_forecast", self.node_check_surf_forecast)
+        workflow.add_node("inform_user_of_bad_surf", self.node_inform_user_of_bad_surf)
+        workflow.add_node("plan_travel_logistics", self.node_plan_travel_logistics)
         workflow.add_node("execute_tools", self.node_execute_tools)
         workflow.add_node("summarize_plan", self.node_summarize_plan)
-        workflow.add_node("clarify_query", self.node_clarify_query)
+        # --- Helper nodes
         workflow.add_node("handle_error", self.node_handle_error)
 
         # 2. Set the entry point to the main router
         workflow.set_entry_point("route_intent")
 
-        # 3. Define the main router's conditional logic
+        # 3. Define the main router's logic
         workflow.add_conditional_edges(
-            start_node_key="route_intent",
-            condition=self.route_from_intent,
+            "route_intent",
+            self.route_from_intent,
             path_map={
                 "update_details": "update_trip_details",
                 "chat": "chat_with_user",
-                "plan_trip": "reason_about_plan",
-                "clarify": "clarify_query",
-                "error": "handle_error",
-                "end_conversation": END,
+                # "plan_trip": "update_trip_details",
+                "clarify_query": "clarify_query",
+                #"request_missing_details": "request_missing_details",
+                "error": "handle_error"
             },
         )
 
-        # 4. Define the planning and tool execution sub-loop
         workflow.add_conditional_edges(
-            start_node_key="reason_about_plan",
-            condition=self.route_from_plan,
+            "update_trip_details",
+            self.route_after_update,
+            {
+                "details_complete": "check_surf_forecast",
+                "details_incomplete": "request_missing_details"
+            },
+        )
+
+        # 4. Define the "fail-fast" surf check logic
+        workflow.add_conditional_edges(
+            "check_surf_forecast",
+            self.route_after_forecast,
+            path_map={
+                "forecast_is_good": "plan_travel_logistics", # If good, proceed to the planning loop
+                "forecast_is_bad": "inform_user_of_bad_surf",
+            },
+        )
+
+        # 5. Define the explicit planning and tool execution sub-loop
+        workflow.add_conditional_edges(
+            "plan_travel_logistics",
+            self.route_from_plan,
             path_map={
                 "continue_planning": "execute_tools",
-                "plan_complete": "summarize_plan",
+                "plan_complete": "summarize_plan", # If done, go to the final summary
             },
         )
-        workflow.add_edge("execute_tools", "reason_about_plan")
+        workflow.add_conditional_edges(
+            "execute_tools",
+            self.route_after_tools,
+            path_map={
+                "continue": "plan_travel_logistics",  # If success, loop back to the brain
+                "error": "handle_error",  # If failure, go to the error handler
+            },
+        )
 
-        # 5. Define the loopbacks for simple conversational turns
-        workflow.add_edge("update_trip_details", "route_intent")
-        workflow.add_edge("chat_with_user", "route_intent")
-        workflow.add_edge("clarify_query", "route_intent")
-        workflow.add_edge("handle_error", "route_intent")
+        # 6. Define the loopbacks for simple conversational turns
+        workflow.add_edge("chat_with_user", END)
+        workflow.add_edge("request_missing_details", END)
+        workflow.add_edge("clarify_query", END)
+        workflow.add_edge("handle_error", END)
 
-        # 6. Define the final step of the graph
+        # 7. Define the final paths to the end of the graph
         workflow.add_edge("summarize_plan", END)
+        workflow.add_edge("inform_user_of_bad_surf", END)
 
-        # 7. Compile and return the graph
+        # 8. Compile and return the graph
         return workflow.compile()

@@ -1,9 +1,16 @@
 import datetime
+from typing import Optional
+import contextlib
 
 import requests
+from geopy.exc import GeocoderServiceError
 from geopy.geocoders import Nominatim
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_core.tools import BaseTool
+
+from langchain_core.callbacks import CallbackManagerForToolRun
+from dataiku.langchain import dku_span_builder_for_callbacks
+from dataiku.langchain import dku_span_builder_for_callbacks
 
 from .data_models import DailySurfForecast
 
@@ -13,6 +20,13 @@ class SurfForecastArgs(BaseModel):
     from_date: str = Field(description="The start date as a string with YYYY-MM-DD format.")
     to_date: str = Field(description="The end date as a string with YYYY-MM-DD format.")
 
+@contextlib.contextmanager
+def _no_op_span_manager(*args, **kwargs):
+    yield
+
+# Dummy span builder class to use as a fallback.
+class DummySpanBuilder:
+    subspan = staticmethod(_no_op_span_manager)
 
 class GetSurfForecastTool(BaseTool):
     """A tool to retrieve the surf forecast between two dates for a specific spot."""
@@ -28,11 +42,10 @@ class GetSurfForecastTool(BaseTool):
     session: requests.Session
     geolocator: Nominatim
 
-    def _run(self, spot: str, from_date: str, to_date: str) -> list[DailySurfForecast] | str:
+    def _run(self, spot: str, from_date: str, to_date: str, run_manager: Optional[CallbackManagerForToolRun] = None) -> list[DailySurfForecast] | str:
         """Use the tool with error handling."""
 
         try:
-
             coordinates = self._get_coordinates(spot)
             latitude, longitude = coordinates
 

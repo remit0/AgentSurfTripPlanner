@@ -1,5 +1,4 @@
 from datetime import datetime
-from random import randint
 
 import requests
 from langchain_core.pydantic_v1 import BaseModel, Field
@@ -92,8 +91,7 @@ class FindTrainTicketsTool(BaseTool):
                     date=from_datetime.date(),
                     departure_time=datetime.strptime(journey['departure_date_time'], "%Y%m%dT%H%M%S"),
                     arrival_time=datetime.strptime(journey['arrival_date_time'], "%Y%m%dT%H%M%S"),
-                    duration=f"{duration_s // 3600}h {(duration_s % 3600) // 60}m",
-                    price_eur=randint(50, 250)
+                    duration=f"{duration_s // 3600}h {(duration_s % 3600) // 60}m"
                 )
             )
         return train_tickets

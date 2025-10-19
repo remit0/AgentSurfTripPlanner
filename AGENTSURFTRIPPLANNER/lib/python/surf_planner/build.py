@@ -44,6 +44,15 @@ class AgentBuilder:
 
     def _setup_surf_forecast_tool(self):
         """Builds and returns the GetSurfForecastTool."""
+        ## SSL Error
+        import certifi
+        import ssl
+        import geopy.geocoders
+        from geopy.geocoders import Nominatim
+
+        ctx = ssl.create_default_context(cafile=certifi.where())
+        geopy.geocoders.options.default_ssl_context = ctx
+        ## end Error
         session = requests.Session()
         geolocator = Nominatim(user_agent=self.GEOLOCATOR_USER_AGENT)
         return GetSurfForecastTool(session=session, geolocator=geolocator)

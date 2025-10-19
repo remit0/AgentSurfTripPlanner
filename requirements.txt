@@ -1,3 +1,4 @@
+certifi
 langchain-openai
 langgraph
 protobuf

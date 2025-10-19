@@ -11,6 +11,7 @@ venv/
 # Python caches
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Dataiku
 .dataiku
