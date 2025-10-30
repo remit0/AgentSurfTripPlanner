@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "my_surf_agent": "./scripts/langgraph_dev.py:agent"
+  },
+  "env": ".env"
+}

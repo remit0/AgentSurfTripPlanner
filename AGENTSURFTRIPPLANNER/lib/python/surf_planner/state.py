@@ -1,6 +1,8 @@
 import operator
 from datetime import date
-from typing import Annotated, TypedDict, Optional
+from typing import Annotated, TypedDict, Optional, List
+from langgraph.graph.message import add_messages
+from langchain_core.messages import BaseMessage
 
 
 class TripDetails(TypedDict, total=False):
@@ -13,7 +15,7 @@ class TripDetails(TypedDict, total=False):
 
 class AgentState(TypedDict):
     """The overall state of the agent."""
-    messages: Annotated[list, operator.add]
+    messages: Annotated[List[BaseMessage], add_messages]
     trip_details: TripDetails
     current_intent: Optional[str]
     error: Optional[str]

@@ -15,6 +15,9 @@ __pycache__/
 
 # Dataiku
 .dataiku
+.langgraph_api
+scripts/langsmith_tracing.py
+scripts/langgraph_dev.py
 
 # Environment files
 .env
