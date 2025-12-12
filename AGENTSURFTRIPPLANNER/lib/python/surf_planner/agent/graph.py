@@ -3,13 +3,9 @@ import logging
 from datetime import date
 
 # Add this to the top of your main script to see the debug messages
-from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.graph import END, StateGraph
-from langchain.agents.format_scratchpad.openai_tools import format_to_openai_tool_messages
 from .prompts import (
-    chat_prompt_template,
-    clarify_query_prompt_template,
     inform_user_prompt_template,
     plan_travel_logistics_prompt_template,
     request_missing_details_prompt_template,
@@ -19,7 +15,7 @@ from .prompts import (
     validate_surf_forecast_prompt_template,
 )
 from .state import AgentState, get_tool_data_for_prompt
-from .tools.helpers import get_weekend_dates, parse_llm_json_response
+from surf_planner.agent.tools.helpers import get_weekend_dates, parse_llm_json_response
 
 
 
@@ -89,24 +85,29 @@ class AgentGraph:
 
     def node_chat_with_user(self, state: AgentState):
         logging.debug("ENTERING NODE: chat_with_user")
-        agent = create_tool_calling_agent(self.model_with_tools, self.tools, chat_prompt_template)
-        agent_executor = AgentExecutor(agent=agent, tools=self.tools, verbose=True)
 
+        # --- 1. Prepare the inputs from the state ---
         messages = state["messages"]
-        trip_details_str = json.dumps(state.get("trip_details", {}), default=str)
-        inputs = {"input": messages[-1].content, "chat_history": messages[:-1], "trip_details": trip_details_str}
 
-        response = agent_executor.invoke(inputs)
-        final_message = AIMessage(content=response["output"])
-        return {"messages": [final_message]}
+        # --- 2. Simple prompt (Prompt | Model) ---
+        chat_prompt_template = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "You are a helpful and enthusiastic surf trip assistant. "
+                    "Answer the user's questions or engage in conversation politely. "
+                ),
+                # This placeholder automatically expands the list of previous messages
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "{input}"),
+            ]
+        )
+        chain = chat_prompt_template | self.plain_model
+        response = chain.invoke({"input": messages[-1].content, "chat_history": messages[:-1]})
 
-    def node_clarify_query(self, state: AgentState):
-        logging.debug("ENTERING NODE: clarify_query")
-        conversation_history = "\n".join([f"{msg.type}: {msg.content}" for msg in state["messages"]])
-        chain = clarify_query_prompt_template | self.plain_model
-        response = chain.invoke({"conversation_history": conversation_history})
-        clarifying_question = AIMessage(content=response.content)
-        return {"messages": [clarifying_question]}
+        # --- 3. Update the state ---
+        llm_response = AIMessage(content=response.content)
+        return {"messages": [llm_response]}
 
     def node_request_missing_details(self, state: AgentState):
         logging.debug("ENTERING NODE: request_missing_details")
@@ -317,7 +318,7 @@ class AgentGraph:
             logging.debug("No error detected, routing to 'continue'.")
             return "continue"
 
-    def create_graph(self):
+    def build(self):
         """Builds and compiles the final state machine graph."""
         workflow = StateGraph(AgentState)
 
@@ -325,7 +326,6 @@ class AgentGraph:
         workflow.add_node("route_intent", self.node_route_intent)
         workflow.add_node("update_trip_details", self.node_update_trip_details)
         workflow.add_node("chat_with_user", self.node_chat_with_user)
-        workflow.add_node("clarify_query", self.node_clarify_query)
         workflow.add_node("request_missing_details", self.node_request_missing_details)
         # --- Nodes for the structured planning flow ---
         workflow.add_node("check_surf_forecast", self.node_check_surf_forecast)
@@ -346,9 +346,6 @@ class AgentGraph:
             path_map={
                 "update_details": "update_trip_details",
                 "chat": "chat_with_user",
-                # "plan_trip": "update_trip_details",
-                "clarify_query": "clarify_query",
-                #"request_missing_details": "request_missing_details",
                 "error": "handle_error"
             },
         )
@@ -393,7 +390,6 @@ class AgentGraph:
         # 6. Define the loopbacks for simple conversational turns
         workflow.add_edge("chat_with_user", END)
         workflow.add_edge("request_missing_details", END)
-        workflow.add_edge("clarify_query", END)
         workflow.add_edge("handle_error", END)
 
         # 7. Define the final paths to the end of the graph

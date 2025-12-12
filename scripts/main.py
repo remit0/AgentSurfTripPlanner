@@ -6,8 +6,8 @@ import dataiku
 from dataiku.langchain import LangchainToDKUTracer
 from dataiku.llm.python import BaseLLM
 from langchain_core.messages import AIMessage, HumanMessage
-from surf_planner.build import AgentBuilder
-from surf_planner.models import DKUChatLLM
+from surf_planner.agent.build import AgentBuilder
+from surf_planner.agent.models import DKUChatLLM
 
 default_calendar_id = "rosenthal.remi@gmail.com"
 llm_model_id = "openai:OpenAI:gpt-4o"
