@@ -4,8 +4,8 @@ from datetime import date
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool
 
-from surf_planner.apis.geolocator.client import GeolocatorAPIClient
-from surf_planner.apis.openmeteo.client import OpenMeteoAPIClient
+from surf_planner.apis.geolocator import GeolocatorAPIClient
+from surf_planner.apis.openmeteo import OpenMeteoAPIClient
 
 
 class SurfForecastArgs(BaseModel):

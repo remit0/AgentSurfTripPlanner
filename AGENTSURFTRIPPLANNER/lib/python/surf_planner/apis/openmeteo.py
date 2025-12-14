@@ -1,8 +1,15 @@
+import datetime
 from datetime import date
 
 import requests
+from pydantic import BaseModel, Field
 
-from surf_planner.apis.openmeteo.models import OpenMeteoForecast
+
+class OpenMeteoForecast(BaseModel):
+    date: datetime.date = Field(alias="day")
+    wave_height_m: float | None = None
+    wave_period_s: float | None = None
+    wind_speed_kmh: float | None = None
 
 
 class OpenMeteoAPIClient:

@@ -1,10 +1,10 @@
 import datetime as dt
+import random
 
-from pydantic import BaseModel, Field
 from langchain_core.tools import tool
+from pydantic import BaseModel, Field
 
-from surf_planner.apis.navitia.client import NavitiaAPIClient
-from surf_planner.apis.navitia.models import NavitiaJourney
+from surf_planner.apis.navitia import NavitiaAPIClient, NavitiaJourney
 
 
 class TrainTicket(BaseModel):
@@ -131,5 +131,67 @@ def create_train_ticket_tool(navitia_client: NavitiaAPIClient):
             return f"Error: {e}"
         except Exception as e:
             return f"An unexpected error occurred while searching for trains: {e}"
+
+    return find_train_tickets
+
+
+def create_dummy_train_ticket_tool():
+    """
+    Creates a 'find_train_tickets' tool that returns simulated train options.
+    Used when Navitia credentials are not provided.
+    """
+
+    @tool(args_schema=FindTrainTicketsArgs)
+    def find_train_tickets(origin: str, destination: str, from_datetime: dt.datetime) -> list[TrainTicket]:
+        """
+        Find available train tickets between two cities.
+        (SIMULATION MODE: Returns randomized valid options for the requested date)
+        """
+        tickets = []
+
+        # Define the end of the requested day (23:59:59)
+        end_of_day = dt.datetime.combine(from_datetime.date(), dt.time.max)
+
+        # Calculate remaining seconds in the day
+        time_remaining = (end_of_day - from_datetime).total_seconds()
+
+        # If less than 2 hours remaining in the day, we can't really generate 2 spaced out trains.
+        # Handle gracefully by just adding a small fixed buffer or failing if strictly past.
+        if time_remaining < 3600:
+            # Fallback: Just generate simulated trains for the NEXT morning if it's too late
+            start_base = from_datetime + dt.timedelta(days=1)
+            start_base = start_base.replace(hour=8, minute=0, second=0)
+            end_of_day = dt.datetime.combine(start_base.date(), dt.time.max)
+            time_remaining = (end_of_day - start_base).total_seconds()
+        else:
+            start_base = from_datetime
+
+        # Generate 2 options
+        for i in range(2):
+            # Pick a random departure time within the available window
+            # We divide the window to ensure options are somewhat spread out
+            # Option 1: First half of remaining time, Option 2: Second half
+            segment = time_remaining / 2
+            random_offset = random.randint(0, int(segment))
+
+            # Ensure proper spacing (i * segment)
+            seconds_to_add = (i * segment) + random_offset
+
+            departure_dt = start_base + dt.timedelta(seconds=seconds_to_add)
+
+            # Duration is fixed to 1 hour
+            arrival_dt = departure_dt + dt.timedelta(hours=1)
+
+            tickets.append(
+                TrainTicket(
+                    date=departure_dt.date(),
+                    origin=origin,
+                    destination=destination,
+                    departure_time=departure_dt,
+                    arrival_time=arrival_dt,
+                    duration="1h 00m"
+                )
+            )
+        return tickets
 
     return find_train_tickets

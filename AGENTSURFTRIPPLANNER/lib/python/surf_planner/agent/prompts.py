@@ -16,8 +16,6 @@ Based on the user's LATEST message, you must choose one of the following intents
 
 - `chat`: The user is asking a general question or making a conversational remark that may require a tool or a simple text answer.
 
-- `clarify_query`: The user's message is genuinely ambiguous, confusing, or contains unclear references. Choose this if you cannot confidently determine another intent.
-
 - `end_conversation`: The user explicitly says goodbye or indicates they are finished with the conversation.
 
 **Instructions**

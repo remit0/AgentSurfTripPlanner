@@ -1,14 +1,36 @@
 import datetime
 import logging
 
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from google.oauth2 import service_account
-
-from surf_planner.apis.google_calendar.models import GoogleCalendarEvent
 
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+
+import datetime as dt
+
+from pydantic import BaseModel, Field
+
+
+class EventTime(BaseModel):
+    datetime: dt.datetime | None = Field(default=None, alias="dateTime")
+    date: dt.date | None = None
+
+
+class GoogleCalendarEvent(BaseModel):
+    summary: str = Field(default="Busy")
+    start: EventTime
+    end: EventTime
+    status: str | None = "confirmed"
+
+    @property
+    def start_string(self) -> str:
+        """Helper to get the actual time string regardless of event type."""
+        val = self.start.datetime or self.start.date
+        if val:
+            return val.isoformat()
+        return "Unknown Time"
 
 
 class GoogleCalendarAPIClient:
@@ -25,7 +47,7 @@ class GoogleCalendarAPIClient:
         service = build("calendar", "v3", credentials=credentials)
         return service
 
-    def list_events(self, start_date: datetime.datetime, end_date: datetime.datetime, max_results=10):
+    def list_events(self, start_date: datetime.datetime, end_date: datetime.datetime, calendar_id: str, max_results=10):
         """
         Fetches events within a specific time range.
         Input: Python datetime objects.
@@ -40,7 +62,7 @@ class GoogleCalendarAPIClient:
             events_result = (
                 self._service.events()
                 .list(
-                    calendarId="rosenthal.remi@gmail.com",
+                    calendarId=calendar_id,
                     timeMin=time_min,
                     timeMax=time_max,
                     maxResults=max_results,

@@ -18,7 +18,7 @@ class GeolocatorAPIClient:
 
     def __init__(self, user_agent: str = GEOLOCATOR_USER_AGENT):
         # --- 1. Apply SSL Fix ---
-        # This fixes common SSL errors on Mac/Linux by forcing geopy to use 
+        # This fixes common SSL errors on Mac/Linux by forcing geopy to use
         # the certificates provided by the 'certifi' package.
         ctx = ssl.create_default_context(cafile=certifi.where())
         geopy.geocoders.options.default_ssl_context = ctx

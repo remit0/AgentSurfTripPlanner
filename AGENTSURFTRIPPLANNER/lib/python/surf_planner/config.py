@@ -76,9 +76,9 @@ class DataikuSettingsSource(PydanticBaseSettingsSource):
 
 class ProjectSettings(BaseSettings):
     # From project variables
-    default_calendar_id: str
     llm_id: str
     # From secrets
+    calendar_id: Optional[str] = Field(default=None)
     NAVITIA_API_KEY: Optional[str] = Field(default=None)
     gcp_service_account: Optional[GcpServiceAccountInfo] = Field(default=None)
 

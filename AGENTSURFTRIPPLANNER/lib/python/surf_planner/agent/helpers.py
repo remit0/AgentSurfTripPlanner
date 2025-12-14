@@ -1,6 +1,8 @@
 import json
 from datetime import date, timedelta
 
+from langchain_core.messages import AIMessage, ToolMessage
+
 
 def get_weekend_dates(departure_date: date) -> tuple[date, date]:
     """
@@ -38,3 +40,16 @@ def parse_llm_json_response(raw_string: str) -> dict | None:
 
     except (json.JSONDecodeError, IndexError):
         return None
+
+
+def split_chat_and_scratchpad(messages):
+    """Separates the visible chat history from the agent's internal tool scratchpad."""
+    last_real_message_idx = -1
+    for i, msg in enumerate(reversed(messages)):
+        if not (isinstance(msg, AIMessage) and msg.tool_calls) and not isinstance(msg, ToolMessage):
+            last_real_message_idx = len(messages) - 1 - i
+            break
+
+    chat_history = messages[: last_real_message_idx + 1]
+    scratchpad = messages[last_real_message_idx + 1 :]
+    return chat_history, scratchpad

@@ -1,10 +1,9 @@
 import datetime
 
-from pydantic import BaseModel, Field
 from langchain_core.tools import tool
+from pydantic import BaseModel, Field
 
-from surf_planner.apis.google_calendar.client import GoogleCalendarAPIClient
-from surf_planner.apis.google_calendar.models import GoogleCalendarEvent
+from surf_planner.apis.google_calendar import GoogleCalendarAPIClient, GoogleCalendarEvent
 
 
 class CheckCalendarArgs(BaseModel):
@@ -68,7 +67,7 @@ def _get_last_events_per_day(events: list[GoogleCalendarEvent]) -> dict[datetime
     return last_events
 
 
-def create_calendar_tool(calendar_client: GoogleCalendarAPIClient):
+def create_calendar_tool(calendar_client: GoogleCalendarAPIClient, calendar_id: str):
     """
     Factory that builds the 'check_calendar' tool with the API client injected via closure.
 
@@ -81,6 +80,8 @@ def create_calendar_tool(calendar_client: GoogleCalendarAPIClient):
 
     Args:
         calendar_client (GoogleCalendarAPIClient): An authenticated client instance for fetching events.
+        :param calendar_client:
+        :param calendar_id: string
 
     Returns:
         StructuredTool: A configured LangChain tool ready to be bound to an agent.
@@ -97,7 +98,7 @@ def create_calendar_tool(calendar_client: GoogleCalendarAPIClient):
             to_dt = datetime.datetime.combine(to_date, datetime.time.max)
 
             # 2. Use the injected client
-            events = calendar_client.list_events(from_dt, to_dt)
+            events = calendar_client.list_events(from_dt, to_dt, calendar_id)
 
             # 3. Process events
             last_events_per_day = _get_last_events_per_day(events)
@@ -123,5 +124,36 @@ def create_calendar_tool(calendar_client: GoogleCalendarAPIClient):
 
         except Exception as e:
             return f"An unexpected error occurred: {e}"
+
+    return check_calendar
+
+
+def create_dummy_calendar_tool():
+    """
+    Creates a 'check_calendar' tool that always returns 'Free all day'.
+    Used when GCP credentials are not provided.
+    """
+
+    @tool(args_schema=CheckCalendarArgs)
+    def check_calendar(from_date: datetime.date, to_date: datetime.date) -> list[DayAvailability]:
+        """
+        Use this tool to check the personal calendar between two dates.
+        (SIMULATION MODE: Returns free availability for all requested dates)
+        """
+        availabilities = []
+        current_day = from_date
+
+        while current_day <= to_date:
+            # Create a "Free all day" entry (end time is 00:00)
+            free_time = datetime.datetime.combine(
+                current_day,
+                datetime.time.min
+            ).replace(tzinfo=datetime.timezone.utc)
+
+            availabilities.append(
+                DayAvailability(date=current_day, meetings_end_at=free_time)
+            )
+            current_day += datetime.timedelta(days=1)
+        return availabilities
 
     return check_calendar
