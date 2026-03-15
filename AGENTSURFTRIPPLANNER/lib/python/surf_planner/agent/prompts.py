@@ -55,56 +55,6 @@ update_details_prompt_template = PromptTemplate(
 )
 
 
-chat_prompt = """You are a friendly and expert surf trip planner. Your main goal is to help the user plan a surf trip, but you can also answer general questions and make conversation.
-
-You have access to a set of tools to get real-time information.
-
-**Your Instructions:**
-1.  **Be Conversational:** If the user is just chatting, respond in a friendly and helpful way.
-2.  **Use Tools When Necessary:** If the user asks for specific, real-time information that you don't know, such as weather forecasts, calendar availability, or train schedules, you MUST use the provided tools.
-3.  **Answer Directly:** For general knowledge questions (e.g., "Is Hossegor nice?", "What is surfing?"), you can answer from your own knowledge.
-4.  **Stay Aware of the Plan:** Keep the overall trip plan in mind. The current details are provided below for your reference.
-
-**Context:**
-- Current Trip Plan:
-{trip_details}
-
-- Conversation History:
-{chat_history}
-
-- User's Latest Message:
-{input}
-"""
-chat_prompt_template = ChatPromptTemplate.from_messages(
-     [
-         ("system", chat_prompt),
-         ("placeholder", "{chat_history}"),
-         ("human", "{input}"),
-         ("placeholder", "{agent_scratchpad}"), # Required for the agent's internal reasoning
-     ]
-)
-
-clarify_query_prompt = """You are a helpful assistant. The user's last message was ambiguous, confusing, or contained unclear references, and the conversation cannot proceed confidently.
-
-Your task is to analyze the conversation history to understand the source of the confusion.
-
-Based on your analysis, formulate a single, polite, and specific question that will help the user clarify their intent. Pinpoint the ambiguous part of their request.
-
-**Conversation History:**
-{conversation_history}
-
-**Instructions:**
-Respond with ONLY the clarifying question you want to ask the user. Do not add any introductory text like "I'm sorry, but...".
-
-**Example:**
-If the user says "No, the other one," your response could be: "Which destination were you referring to when you said 'the other one'?"
-"""
-clarify_query_prompt_template = PromptTemplate(
-     template=clarify_query_prompt,
-     input_variables=["conversation_history"],
-)
-
-
 request_missing_details_prompt = """You are a helpful surf trip planning assistant. The user wants to plan a trip, but is missing some essential information.
 
 Your task is to analyze the current trip plan and formulate a single, polite question to ask the user for the missing details.

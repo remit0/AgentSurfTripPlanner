@@ -67,7 +67,7 @@ class AgentGraph:
         # Main Intent Router
         workflow.add_conditional_edges(
             "route_intent",
-            edge_from_intent,  # Pure state check, no partial needed
+            edge_from_intent,
             path_map={
                 "update_details": "update_trip_details",
                 "chat": "chat_with_user",
@@ -88,7 +88,7 @@ class AgentGraph:
         # Forecast Check (Needs Model for Validation)
         workflow.add_conditional_edges(
             "check_surf_forecast",
-            partial(edge_after_forecast, model=self.plain_model), # Inject model here!
+            partial(edge_after_forecast, model=self.plain_model),
             path_map={
                 "forecast_is_good": "plan_travel_logistics",
                 "forecast_is_bad": "inform_user_of_bad_surf",

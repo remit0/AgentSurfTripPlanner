@@ -14,8 +14,7 @@ from surf_planner.config import ProjectSettings
 
 class AgentBuilder:
 
-    def __init__(self, dku_client, settings: ProjectSettings):
-        self._dku_client = dku_client
+    def __init__(self, settings: ProjectSettings):
         self._settings = settings
 
     def _build_model(self):

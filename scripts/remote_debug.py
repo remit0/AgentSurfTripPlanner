@@ -17,8 +17,7 @@ class MyLLM(BaseLLM):
 
     def __init__(self):
         settings = ProjectSettings()
-        client = dataiku.api_client()
-        builder = AgentBuilder(client, settings)
+        builder = AgentBuilder(settings)
         self.agent = builder.build()
 
     def process(self, query, settings, trace):

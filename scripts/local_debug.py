@@ -1,5 +1,5 @@
 import os
-
+from datetime import date, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,12 +16,20 @@ dataiku.set_remote_dss("http://localhost:11000/", os.environ.get("DKU_API_KEY"))
 if __name__ == '__main__':
 
     settings = ProjectSettings()
-    client = dataiku.api_client()
-    builder = AgentBuilder(client, settings)
+    builder = AgentBuilder(settings)
     agent = builder.build()
 
-    prompt = """ I'd like to plan a surf trip to Bayonne. I am departing from Paris. 
-    I'd like to go on the 16 December 2025 and return on the 20 November 2025. """
+    today = date.today()
+    start_date = today + timedelta(days=1)  # Tomorrow
+    end_date = start_date + timedelta(days=7)  # 7 days after start
+
+    start_str = start_date.strftime("%d %B %Y")
+    end_str = end_date.strftime("%d %B %Y")
+
+    # --- F-String Prompt ---
+    prompt = f""" I'd like to plan a surf trip to Bayonne. I am departing from Paris. 
+    I'd like to go on the {start_str} and return on the {end_str}. """
+
     inputs = {"messages": [HumanMessage(content=prompt)]}
     final_state = agent.invoke(inputs)
     final_answer = final_state["messages"][-1].content
